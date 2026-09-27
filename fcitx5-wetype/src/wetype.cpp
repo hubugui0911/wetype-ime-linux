@@ -113,9 +113,19 @@ static std::string segmentPinyin(const std::string &raw) {
     return out;
 }
 
-static Text pinyinPreedit(const std::string &buffer) {
+static Text pinyinPreedit(const std::string &buffer, bool forClient = false) {
     Text text;
-    if (!buffer.empty()) text.append(segmentPinyin(buffer), TextFormatFlag::NoFlag);
+    if (!buffer.empty()) {
+        // Official client preedit (cf. PinyinEngine::preedit) carries a
+        // cursor index; without it the client cannot anchor the
+        // composition (Chromium misplaces the first character).
+        text.append(segmentPinyin(buffer),
+                    forClient ? TextFormatFlag::Underline
+                              : TextFormatFlag::NoFlag);
+        if (forClient) {
+            text.setCursor(text.size());
+        }
+    }
     return text;
 }
 
@@ -445,6 +455,29 @@ private:
     void updateUI(InputContext &ic) {
         auto &panel = ic.inputPanel();
         panel.reset();
+        // Mirror the official pattern of fcitx5-chinese-addons
+        // (PinyinEngine::updatePreedit): send the composition as client
+        // preedit to Preedit-capable clients so they stay in sync during
+        // composition (fixes Chromium text-input-v3 stale-anchor drift),
+        // while keeping the panel preedit line (WeType-style composition
+        // display, and the only channel for clients without the
+        // capability).
+        if (ic.capabilityFlags().test(CapabilityFlag::Preedit)) {
+            // Invisible client preedit: Chromium only anchors the IME
+            // (real cursor rect instead of a garbage fallback) while a
+            // composition round-trip is flowing. A zero-width space keeps
+            // that machinery running while leaving the visible
+            // composition display entirely to the panel preedit.
+            Text invisible;
+            if (!buf_.empty()) {
+                invisible.append("\u200b", TextFormatFlag::NoFlag);
+                invisible.setCursor(invisible.size());
+            }
+            panel.setClientPreedit(invisible);
+            // Client preedit has its own propagation channel; without this
+            // call the frontend never emits set_preedit_string.
+            ic.updatePreedit();
+        }
         panel.setPreedit(pinyinPreedit(buf_));
         if (!cands_.empty()) {
             if (windowStart_ >= static_cast<int>(cands_.size())) {
