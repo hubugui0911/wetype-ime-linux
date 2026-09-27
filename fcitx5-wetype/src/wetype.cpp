@@ -475,9 +475,15 @@ private:
                 // size, so set it only after all compact candidates exist.
                 cl->setGlobalCursorIndex(selected_ - start);
             } else {
+                // Legacy fcitx4 DBus clients (WeChat's statically linked IM
+                // plugin) request ClientSideInputPanel: they re-render the
+                // candidate list from plain strings + cursorIndex, so the
+                // TextFormatFlag-based cell highlight never reaches them.
+                // Mark the selected word with brackets for those clients.
+                const bool clientPanel = ic.capabilityFlags().test(
+                    CapabilityFlag::ClientSideInputPanel);
                 cl->setPageSize(GRID_COLUMNS);
                 cl->setLabels(std::vector<std::string>(GRID_COLUMNS, ""));
-                cl->setGlobalCursorIndex(-1);
                 for (int col = 0; col < GRID_COLUMNS; ++col) {
                     Text column;
                     for (int row = 0; row < GRID_ROWS; ++row) {
@@ -488,7 +494,13 @@ private:
                             const auto flag = selected ? TextFormatFlag::HighLight
                                                        : TextFormatFlag::NoFlag;
                             column.append(label, flag);
+                            if (selected && clientPanel) {
+                                column.append("「", flag);
+                            }
                             column.append(cands_[index], flag);
+                            if (selected && clientPanel) {
+                                column.append("」", flag);
+                            }
                         } else {
                             column.append(" ");
                         }
@@ -499,6 +511,14 @@ private:
                         [this, selectedIndex](InputContext *context) {
                             commitCandidate(context, selectedIndex);
                         });
+                }
+                // Cursor must be set after all candidates exist (the API
+                // validates against list size). Only client-side panel
+                // clients highlight solely by cursorIndex; classicui uses
+                // the TextFormatFlag-based cell highlight instead.
+                if (clientPanel) {
+                    cl->setGlobalCursorIndex(
+                        (selected_ - start) % GRID_COLUMNS);
                 }
             }
             panel.setCandidateList(std::move(cl));
